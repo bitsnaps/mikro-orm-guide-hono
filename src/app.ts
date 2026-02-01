@@ -1,10 +1,16 @@
-import { fastify } from 'fastify';
-import fastifyJWT from '@fastify/jwt';
-import { NotFoundError, RequestContext } from '@mikro-orm/sqlite';
+import { Hono } from 'hono';
+import { logger } from 'hono/logger';
+import { verify } from 'hono/jwt';
+import { RequestContext, NotFoundError } from '@mikro-orm/sqlite';
 import { initORM } from './db.js';
-import { registerUserRoutes } from './modules/user/routes.js';
-import { registerArticleRoutes } from './modules/article/routes.js';
+import { userRoutes } from './modules/user/routes.js';
+import { articleRoutes } from './modules/article/routes.js';
 import { AuthError } from './modules/common/utils.js';
+import { User } from './modules/user/user.entity.js';
+
+type Variables = {
+  user: User;
+};
 
 export async function bootstrap(port = 3001, migrate = true) {
   const db = await initORM();
@@ -14,52 +20,48 @@ export async function bootstrap(port = 3001, migrate = true) {
     await db.orm.migrator.up();
   }
 
-  const app = fastify();
-
-  // register JWT plugin
-  app.register(fastifyJWT, {
-    secret: process.env.JWT_SECRET ?? '12345678', // fallback for testing
-  });
+  const app = new Hono<{ Variables: Variables }>();
+  app.use(logger());
 
   // register request context hook
-  app.addHook('onRequest', (request, reply, done) => {
-    RequestContext.create(db.em, done);
+  app.use(async (c, next) => {
+    return RequestContext.create(db.em, next);
   });
+
+  const JWT_SECRET = process.env.JWT_SECRET ?? '12345678';
 
   // register auth hook after the ORM one to use the context
-  app.addHook('onRequest', async request => {
-    try {
-      const ret = await request.jwtVerify<{ id: number }>();
-      request.user = await db.user.findOneOrFail(ret.id);
-    } catch (e) {
-      app.log.error(e);
-      // ignore token errors, we validate the request.user exists only where needed
+  app.use(async (c, next) => {
+    const authHeader = c.req.header('Authorization');
+    if (authHeader) {
+      try {
+        const token = authHeader.split(' ')[1];
+        const payload = await verify(token, JWT_SECRET, 'HS256');
+        const user = await db.user.findOneOrFail(payload.id as number);
+        c.set('user', user);
+      } catch (e) {
+        // ignore token errors, we validate the request.user exists only where needed
+      }
     }
+    await next();
   });
 
-  // register global error handler to process 404 errors from `findOneOrFail` calls
-  app.setErrorHandler((error, request, reply) => {
-    if (error instanceof AuthError) {
-      return reply.status(401).send({ error: error.message });
+  // register global error handler
+  app.onError((err, c) => {
+    if (err instanceof AuthError) {
+      return c.json({ error: err.message }, 401);
     }
 
-    if (error instanceof NotFoundError) {
-      return reply.status(404).send({ error: error.message });
+    if (err instanceof NotFoundError) {
+      return c.json({ error: err.message }, 404);
     }
 
-    app.log.error(error);
-    reply.status(500).send({ error: error.message });
+    console.error(err);
+    return c.json({ error: err.message }, 500);
   });
 
-  // shut down the connection when closing the app
-  app.addHook('onClose', async () => {
-    await db.orm.close();
-  });
+  app.route('/user', userRoutes);
+  app.route('/article', articleRoutes);
 
-  app.register(registerUserRoutes, { prefix: 'user' });
-  app.register(registerArticleRoutes, { prefix: 'article' });
-
-  const url = await app.listen({ port });
-
-  return { app, url };
+  return { app, port, db };
 }

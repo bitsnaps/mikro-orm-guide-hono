@@ -1,45 +1,48 @@
-import { FastifyInstance } from 'fastify';
+import { Hono } from 'hono';
 import { afterAll, beforeAll, expect, test } from 'vitest';
+import { Services } from '../src/db.js';
 import { initTestApp } from './utils.js';
 
-let app: FastifyInstance;
+let app: Hono;
+let db: Services;
 
 beforeAll(async () => {
   // we use different ports to allow parallel testing
-  app = await initTestApp(30002);
+  const res = await initTestApp(30002);
+  app = res.app;
+  db = res.db;
 });
 
 afterAll(async () => {
-  // we close only the fastify app - it will close the database connection via onClose hook automatically
-  await app.close();
+  await db.orm.close();
 });
 
 test('login', async () => {
-  const res1 = await app.inject({
-    method: 'post',
-    url: '/user/sign-in',
-    payload: {
+  const res1 = await app.request('/user/sign-in', {
+    method: 'POST',
+    body: JSON.stringify({
       email: 'foo@bar.com',
       password: 'password123',
-    },
+    }),
+    headers: { 'Content-Type': 'application/json' },
   });
 
-  expect(res1.statusCode).toBe(200);
-  expect(res1.json()).toMatchObject({
+  expect(res1.status).toBe(200);
+  expect(await res1.json()).toMatchObject({
     fullName: 'Foo Bar',
     token: expect.any(String),
     social: { twitter: '@foobar' },
   });
 
-  const res2 = await app.inject({
-    method: 'post',
-    url: '/user/sign-in',
-    payload: {
+  const res2 = await app.request('/user/sign-in', {
+    method: 'POST',
+    body: JSON.stringify({
       email: 'foo@bar.com',
       password: 'password456',
-    },
+    }),
+    headers: { 'Content-Type': 'application/json' },
   });
 
-  expect(res2.statusCode).toBe(401);
-  expect(res2.json()).toMatchObject({ error: 'Invalid combination of email and password' });
+  expect(res2.status).toBe(401);
+  expect(await res2.json()).toMatchObject({ error: 'Invalid combination of email and password' });
 });

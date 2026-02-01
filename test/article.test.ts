@@ -1,26 +1,26 @@
 import { afterAll, beforeAll, expect, test } from 'vitest';
+import { Hono } from 'hono';
+import { Services } from '../src/db.js';
 import { initTestApp } from './utils.js';
-import { FastifyInstance } from 'fastify';
 
-let app: FastifyInstance;
+let app: Hono;
+let db: Services;
 
 beforeAll(async () => {
   // we use different ports to allow parallel testing
-  app = await initTestApp(30001);
+  const res = await initTestApp(30001);
+  app = res.app;
+  db = res.db;
 });
 
 afterAll(async () => {
-  // we close only the fastify app - it will close the database connection via onClose hook automatically
-  await app.close();
+  await db.orm.close();
 });
 
 test('list all articles', async () => {
-  const res = await app.inject({
-    method: 'get',
-    url: '/article',
-  });
-  expect(res.statusCode).toBe(200);
-  expect(res.json()).toMatchObject({
+  const res = await app.request('/article');
+  expect(res.status).toBe(200);
+  expect(await res.json()).toMatchObject({
     items: [
       {
         slug: expect.any(String),

@@ -1,88 +1,97 @@
-import { FastifyInstance } from 'fastify';
+import { Hono } from 'hono';
 import { wrap } from '@mikro-orm/sqlite';
 import { initORM } from '../../db.js';
 import { Article } from './article.entity.js';
 import { getUserFromToken, verifyArticlePermissions } from '../common/utils.js';
 
-export async function registerArticleRoutes(app: FastifyInstance) {
+const articleRoutes = new Hono();
+
+// list articles
+articleRoutes.get('/', async c => {
   const db = await initORM();
+  const limit = c.req.query('limit') ? Number(c.req.query('limit')) : undefined;
+  const offset = c.req.query('offset') ? Number(c.req.query('offset')) : undefined;
 
-  // list articles
-  app.get('/', async request => {
-    const { limit, offset } = request.query as { limit?: number; offset?: number };
-
-    // start with simple findAndCount
-    const { items, total } = await db.article.listArticles({
-      limit, offset, cache: 5_000,
-    });
-
-    return { items, total };
+  // start with simple findAndCount
+  const { items, total } = await db.article.listArticles({
+    limit, offset, cache: 5_000,
   });
 
-  // article detail
-  app.get('/:slug', async request => {
-    const { slug } = request.params as { slug: string };
-    return db.article.findOneOrFail({ slug }, {
-      populate: ['author', 'comments.author', 'text'],
-    });
+  return c.json({ items, total });
+});
+
+// article detail
+articleRoutes.get('/:slug', async c => {
+  const db = await initORM();
+  const slug = c.req.param('slug');
+  const article = await db.article.findOneOrFail({ slug }, {
+    populate: ['author', 'comments.author', 'text'],
+  });
+  return c.json(article);
+});
+
+// create comment
+articleRoutes.post('/:slug/comment', async c => {
+  const db = await initORM();
+  const slug = c.req.param('slug');
+  const { text } = await c.req.json() as { text: string };
+  const author = getUserFromToken(c);
+  const article = await db.article.findOneOrFail({ slug });
+  const comment = db.comment.create({ author, article, text });
+
+  // mention this is in fact a no-op, as it will be automatically propagated by setting Comment.author
+  article.comments.add(comment);
+
+  // mention we don't need to persist anything explicitly
+  await db.em.flush();
+
+  return c.json(comment);
+});
+
+// create article
+articleRoutes.post('/', async c => {
+  const db = await initORM();
+  const { title, description, text } = await c.req.json() as { title: string; description: string; text: string };
+  const author = getUserFromToken(c);
+  const article = db.article.create({
+    title, description, text,
+    author,
   });
 
-  // create article
-  app.post('/:slug/comment', async request => {
-    const { slug, text } = request.params as { slug: string; text: string };
-    const author = getUserFromToken(request);
-    const article = await db.article.findOneOrFail({ slug });
-    const comment = db.comment.create({ author, article, text });
+  await db.em.flush();
 
-    // mention this is in fact a no-op, as it will be automatically propagated by setting Comment.author
-    article.comments.add(comment);
+  return c.json(article);
+});
 
-    // mention we don't need to persist anything explicitly
-    await db.em.flush();
+// update article
+articleRoutes.patch('/:id', async c => {
+  const db = await initORM();
+  const user = getUserFromToken(c);
+  const id = c.req.param('id');
+  const article = await db.article.findOneOrFail(+id);
+  verifyArticlePermissions(user, article);
+  wrap(article).assign(await c.req.json() as Article);
+  await db.em.flush();
 
-    return comment;
-  });
+  return c.json(article);
+});
 
-  // create article
-  app.post('/', async request => {
-    const { title, description, text } = request.body as { title: string; description: string; text: string };
-    const author = getUserFromToken(request);
-    const article = db.article.create({
-      title, description, text,
-      author,
-    });
+// delete article
+articleRoutes.delete('/:id', async c => {
+  const db = await initORM();
+  const user = getUserFromToken(c);
+  const id = c.req.param('id');
+  const article = await db.article.findOne(+id);
 
-    await db.em.flush();
+  if (!article) {
+    return c.json({ notFound: true }, 404);
+  }
 
-    return article;
-  });
+  verifyArticlePermissions(user, article);
+  // mention `nativeDelete` alternative if we don't care about validations much
+  await db.em.remove(article).flush();
 
-  // update article
-  app.patch('/:id', async request => {
-    const user = getUserFromToken(request);
-    const params = request.params as { id: string };
-    const article = await db.article.findOneOrFail(+params.id);
-    verifyArticlePermissions(user, article);
-    wrap(article).assign(request.body as Article);
-    await db.em.flush();
+  return c.json({ success: true });
+});
 
-    return article;
-  });
-
-  // delete article
-  app.delete('/:id', async request => {
-    const user = getUserFromToken(request);
-    const params = request.params as { id: string };
-    const article = await db.article.findOne(+params.id);
-
-    if (!article) {
-      return { notFound: true };
-    }
-
-    verifyArticlePermissions(user, article);
-    // mention `nativeDelete` alternative if we don't care about validations much
-    await db.em.remove(article).flush();
-
-    return { success: true };
-  });
-}
+export { articleRoutes };

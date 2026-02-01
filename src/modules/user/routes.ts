@@ -1,5 +1,6 @@
 import { wrap } from '@mikro-orm/sqlite';
-import { FastifyInstance } from 'fastify';
+import { Hono } from 'hono';
+import { sign } from 'hono/jwt';
 import { z } from 'zod';
 import { initORM } from '../../db.js';
 import { User } from './user.entity.js';
@@ -19,45 +20,50 @@ const userSchema = z.object({
   social: socialSchema.optional(),
 });
 
-export async function registerUserRoutes(app: FastifyInstance) {
+const userRoutes = new Hono();
+const JWT_SECRET = process.env.JWT_SECRET ?? '12345678';
+
+// register new user
+userRoutes.post('/sign-up', async c => {
   const db = await initORM();
+  const body = await c.req.json();
+  const dto = userSchema.parse(body);
 
-  // register new user
-  app.post('/sign-up', async request => {
-    const dto = userSchema.parse(request.body);
+  if (await db.user.exists(dto.email)) {
+    throw new Error('This email is already registered, maybe you want to sign in?');
+  }
 
-    if (await db.user.exists(dto.email)) {
-      throw new Error('This email is already registered, maybe you want to sign in?');
-    }
+  // thanks to zod, our `dto` is fully typed and passes the `em.create()` checks
+  const user = db.user.create(dto);
+  await db.em.flush(); // no need for explicit `em.persist()` when we use `em.create()`
 
-    // thanks to zod, our `dto` is fully typed and passes the `em.create()` checks
-    const user = db.user.create(dto);
-    await db.em.flush(); // no need for explicit `em.persist()` when we use `em.create()`
+  // after flush, we have the `user.id` set
+  user.token = await sign({ id: user.id }, JWT_SECRET, 'HS256');
 
-    // after flush, we have the `user.id` set
-    user.token = app.jwt.sign({ id: user.id });
+  return c.json(user);
+});
 
-    return user;
-  });
+// login existing user
+userRoutes.post('/sign-in', async c => {
+  const db = await initORM();
+  const { email, password } = await c.req.json() as { email: string; password: string };
+  const user = await db.user.login(email, password);
+  user.token = await sign({ id: user.id }, JWT_SECRET, 'HS256');
 
-  // login existing user
-  app.post('/sign-in', async request => {
-    const { email, password } = request.body as { email: string; password: string };
-    const user = await db.user.login(email, password);
-    user.token = app.jwt.sign({ id: user.id })
+  return c.json(user);
+});
 
-    return user;
-  });
+userRoutes.get('/profile', async c => {
+  const user = getUserFromToken(c);
+  return c.json(user);
+});
 
-  app.get('/profile', async request => {
-    const user = getUserFromToken(request);
-    return user;
-  });
+userRoutes.patch('/profile', async c => {
+  const db = await initORM();
+  const user = getUserFromToken(c);
+  wrap(user).assign(await c.req.json() as User);
+  await db.em.flush();
+  return c.json(user);
+});
 
-  app.patch('/profile', async request => {
-    const user = getUserFromToken(request);
-    wrap(user).assign(request.body as User);
-    await db.em.flush();
-    return user;
-  });
-}
+export { userRoutes };

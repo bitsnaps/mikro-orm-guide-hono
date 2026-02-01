@@ -15,7 +15,5 @@ export async function initTestApp(port: number) {
   await orm.schema.createSchema();
   await orm.seeder.seed(TestSeeder);
 
-  const { app } = await bootstrap(port, false);
-
-  return app;
+  return bootstrap(port, false);
 }

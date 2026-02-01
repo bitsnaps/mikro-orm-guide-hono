@@ -13,7 +13,7 @@ MikroORM is a TypeScript ORM for Node.js based on Data Mapper, Unit of Work, and
 The goal of this guide is to show off the most important features of MikroORM as well as some of the more niche ones. It will walk you through creating a simple API for a blog, with the following technologies:
 
 - [MikroORM](https://mikro-orm.io) with SQLite driver
-- [Fastify](https://www.fastify.io) as the web framework
+- [Hono](https://hono.dev) as the web framework
 - [Vitest](https://vitest.dev) for testing
 - ECMAScript modules
 - JWT authentication
@@ -48,7 +48,7 @@ Here is (an incomplete) list of features you will try going through this guide.
 
 - creating an app from scratch with TypeScript setup
 - folder-based discovery, ts-morph reflection, ES modules
-- request context management via middleware/fastify hook
+- request context management via middleware
 - entity relations, advanced entity definition (e.g. lazy scalar properties)
 - advanced type safety (e.g. `OptionalProps`, `Reference` wrapper and `Loaded` type)
 - events, including advanced use cases like soft-delete via `onFlush` event
@@ -57,4 +57,10 @@ Here is (an incomplete) list of features you will try going through this guide.
 - virtual entities
 - serialization
 - embeddables
+
+
+## License
+MIT
+
+
 

@@ -1,13 +1,15 @@
-import { FastifyRequest } from 'fastify';
+import { Context } from 'hono';
 import { User } from '../user/user.entity.js';
 import { Article } from '../article/article.entity.js';
 
-export function getUserFromToken(req: FastifyRequest): User {
-  if (!req.user) {
+export function getUserFromToken(c: Context): User {
+  const user = c.get('user') as User;
+
+  if (!user) {
     throw new Error('Please provide your token via Authorization header');
   }
 
-  return req.user as User;
+  return user;
 }
 
 export function verifyArticlePermissions(user: User, article: Article): void {
